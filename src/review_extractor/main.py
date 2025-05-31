@@ -14,7 +14,7 @@ def handler(event, context):
     logger.info(f"Processed message: {message}")
     return {
         "statusCode": 200,
-        "messages_processed": message
+        "body": message
 
     }
     
