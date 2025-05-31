@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "review-extractor"
-version = "0.0.6"
+version = "0.0.7"
 description = "review extractor"
 authors = ["Michael Lasso <lassomicha@hotmail.com>"]
 
