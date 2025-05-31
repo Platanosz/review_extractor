@@ -11,7 +11,7 @@ def handler(event, context):
     body = json.loads(event['body'])
     text = body.get("text")
     message = orchestrator.start(text)
-    logger.info(f"Processed message: {message}")
+    logger.info(f"Processed message: {message.get('summaries', 'No query found')}")
     return {
         "statusCode": 200,
         "body": message

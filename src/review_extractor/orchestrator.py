@@ -42,7 +42,9 @@ class Orchestrator:
             })
             logger.info(f"Reviews for {place['name']}: {len(reviews)} reviews")
 
-        return {"user_query": user_query, "demographics": demographics, "places": revs}
+        summaries = self.summarize_reviews_in_dialect(demographics, revs, client)
+
+        return {"user_query": user_query, "demographics": demographics, "places": revs, "summaries": summaries}
 
     def extract_user_interest(self, text: str, client: OpenAI) -> dict:
         instructions = """
@@ -71,6 +73,38 @@ class Orchestrator:
         messages = [
             {"role": "system", "content": instructions},
             {"role": "user", "content": text}
+        ]
+
+        response = client.chat.completions.create(
+            model='gpt-4.1-mini-2025-04-14',
+            messages=messages
+        )
+
+        return json.loads(response.choices[0].message.content)
+
+    def summarize_reviews_in_dialect(self, demographics: dict, places: list, client: OpenAI) -> list:
+        instructions = f"""
+        You are a fun and culturally-aware assistant. Your job is to read reviews for a list of places and synthesize a short, high-level summary for each place in the dialect that best matches the user demographic.
+
+        Demographic metadata:
+        {json.dumps(demographics)}
+
+        Use culturally relevant language. For example:
+        - Young users might prefer slang like "This place is fire" or "a total vibe."
+        - Older users might prefer "This is a wonderful spot" or "a charming experience."
+        - Consider dialects and regional slang when writing the summaries.
+
+        For each place, return a JSON object with:
+        - name
+        - summary
+
+        ONLY respond with a JSON array.
+        """
+
+        user_input = json.dumps(places, indent=2)
+        messages = [
+            {"role": "system", "content": instructions},
+            {"role": "user", "content": user_input}
         ]
 
         response = client.chat.completions.create(
@@ -135,4 +169,5 @@ class Orchestrator:
             }
             for r in raw_reviews
         ]
+
         return reviews
