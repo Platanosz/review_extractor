@@ -14,7 +14,7 @@ def handler(event, context):
     logger.info(f"Processed message: {message.get('summaries', 'No query found')}")
     return {
         "statusCode": 200,
-        "body": message
+        "body": json.dumps(message)
 
     }
     
