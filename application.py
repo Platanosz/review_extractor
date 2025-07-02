@@ -2,6 +2,7 @@ from src.review_extractor.main import handler
 
 if __name__ == "__main__":
     event = {
-        'version': '2.0', 'routeKey': '$default', 'rawPath': '/%20', 'rawQueryString': '', 'headers': {'content-length': '75', 'x-amzn-tls-version': 'TLSv1.3', 'x-forwarded-proto': 'https', 'postman-token': '80b882a9-a4fb-40c4-8971-7b7dcc0f9fde', 'x-forwarded-port': '443', 'x-forwarded-for': '158.106.193.162', 'accept': '*/*', 'x-amzn-tls-cipher-suite': 'TLS_AES_128_GCM_SHA256', 'x-amzn-trace-id': 'Self=1-683b1d7f-13700d02082ad7af0ee2ef0a;Root=1-683b1d7f-54f9b47c477a6dde0ad473a9', 'host': '5ph4clwzvhxbxfi5nustm5o4yi0bwzuu.lambda-url.us-east-1.on.aws', 'content-type': 'application/json', 'cache-control': 'no-cache', 'accept-encoding': 'gzip, deflate, br', 'user-agent': 'PostmanRuntime/7.43.4'}, 'requestContext': {'accountId': 'anonymous', 'apiId': '5ph4clwzvhxbxfi5nustm5o4yi0bwzuu', 'domainName': '5ph4clwzvhxbxfi5nustm5o4yi0bwzuu.lambda-url.us-east-1.on.aws', 'domainPrefix': '5ph4clwzvhxbxfi5nustm5o4yi0bwzuu', 'http': {'method': 'POST', 'path': '/ ', 'protocol': 'HTTP/1.1', 'sourceIp': '158.106.193.162', 'userAgent': 'PostmanRuntime/7.43.4'}, 'requestId': 'abb673da-c05f-4224-b848-0727b588049c', 'routeKey': '$default', 'stage': '$default', 'time': '31/May/2025:15:17:19 +0000', 'timeEpoch': 1748704639569}, 'body': '{\n        "text": "italian restaurant near Empire State Building"\n        }', 'isBase64Encoded': False}
+        "body": '{\n        "text": "italian restaurant near Empire State Building"\n        }'
+        }
 
     handler(event, {})
