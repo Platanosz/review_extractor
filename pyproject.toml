@@ -15,9 +15,9 @@ boto3 = "^1.35.29"
 botocore = "^1.35.29"
 aws-lambda-powertools = "^3.0.0"
 python-dotenv = "^1.0.1"
-openai = "1.40.1"
-httpx = "0.27.2"
-requests = "^2.32.3"
+pymongo = "^4.8.0"
+twelvelabs = "^0.4.10"
+moviepy = "^2.2.1"
 
 
 [build-system]

@@ -1,13 +1,12 @@
-from botocore.exceptions import ClientError
-import json
-from openai import OpenAI
+
 import boto3
 import os
-import requests
 import logging
-from dotenv import load_dotenv
-
-load_dotenv()
+from twelvelabs import TwelveLabs
+from twelvelabs.models.task import Task
+from .mongo_client import AtlasClient
+from datetime import datetime, timezone
+from moviepy import VideoFileClip
 
 logging.basicConfig(level=logging.INFO,
                     format='%(levelname)s %(asctime)s [%(filename)s:%(lineno)d]: %(message)s'
@@ -17,157 +16,115 @@ logger = logging.getLogger(__name__)
 
 class Orchestrator:
 
-    def __init__(self, api_key: str, google_api_key: str):
-        self.api_key = api_key
-        self.google_api_key = google_api_key
+    def __init__(self, api_key: str, atlas_client: AtlasClient):
+        self.client = TwelveLabs(api_key=api_key)
+        self.atlas_client = atlas_client
+        self.s3 = boto3.client('s3')
 
-    def start(self, text: str) -> dict:
+    def start(self, record: dict) -> dict:
+        
         logger.info("start")
-        client = OpenAI(api_key=self.api_key)
-        extracted = self.extract_user_interest(text, client)
-        user_query = extracted["query"]
-        demographics = extracted["demographics"]
+        bucket = record['s3']['bucket']['name']
+        s3_key = record['s3']['object']['key']
+        logger.info(f"Processing file from bucket: {bucket}, key: {s3_key}")
+        # TODO algorithm to extract metadata from the video
+        # 1. Download the file from S3
+        file, file_path = self.get_file(bucket, s3_key)
+        duration = self.get_video_duration_moviepy(file_path)
+        # 2. Retrived current video metadata from MongoDB
+        video_metadata = self.atlas_client.find_video_metadata(s3_key)
+        logger.info(f"Video metadata: {video_metadata}")
+        # 3. Check if video index already exists in MongoDB
+        account_details = self.atlas_client.find_account_details(video_metadata['discord_id'])
+        index_id = account_details.get("index_id")
+        if index_id == None:
+            models = [
+                {
+                    "name": "pegasus1.2",
+                    "options": ["visual", "audio"]
+                }
+            ]
+        #   3-a. If not, create a new video index
+            index = self.client.index.create(name=video_metadata["discord_id"], models=models)
+            print(f"Index created: id={index.id}, name={index.name}")
+        #   3-b. Stored index in MongoDB
+            self.atlas_client.upsert_index_id(video_metadata["discord_id"], index.id)
+            index_id = index.id
+        # 4. Process the video using Twelve Labs API
+        task = self.client.task.create(index_id=index_id, file=file)
+        # print(f"Task id={task.id}, Video id={task.video_id}")
+        # task.wait_for_done(sleep_interval=5, callback=self.on_task_update)
+        # if task.status != "ready":
+        #     raise RuntimeError(f"Indexing failed with status {task.status}")
+        # print(f"The unique identifier of your video is {task.video_id}.")
+        video_id = task.video_id
+        task_id = task.id
+        # 5. Trigger prompts to extract metadata
+        prompts = account_details.get("prompts", [])
+        # for prompt in account_details.get("prompts", []):
+        #     text_stream = self.client.analyze_stream(
+        #     video_id=video_id, prompt=prompt.get("prompt_content"), temperature=0.2)
+        #     for text in text_stream:
+        #         print(text)
+        #     print(f"Aggregated text: {text_stream.aggregated_text}")
+        #     prompts.append({prompt.get("prompt_name"): text_stream.aggregated_text})
+        # 6. Store the metadata in MongoDB (video_id, index_id, metadata, processed_timestamp, duration, etc.)
+        self.atlas_client.update_video_metadata(s3_key,
+                                                {"task_id": task_id,
+                                                 "video_id": video_id,
+                                                 "status":"INDEXING",
+                                                 "index_id": index_id,
+                                                 "prompts":prompts,
+                                                 "duration": f"{duration} seconds",
+                                                 "updated_at": datetime.now(timezone.utc)}
+                                                )
+        
+        # TODO
+        # create a separate collection for each client account and what their preferences are
+        # Add pymovie to extract video duration
+        # increase memory for lambda functions to handle video sizes
+        # two use cases:
+        #   1. clips to be processed to montage videos
+        #   2. long videos to be processed to short videos
 
-        places = self.search_places_by_text(user_query, location_bias="New York City")
-        logger.info(f"Places found: {places}")
-        revs = []
-        for place in places:
-            logger.info(f"Place: {place['name']}, Address: {place['address']}, Rating: {place['rating']}")
-            reviews = self.get_place_details_with_reviews(place['place_id'])
-            revs.append({
-                "name": place['name'],
-                "rating": place['rating'],
-                "address": place['address'],
-                "reviews": reviews
-            })
-            logger.info(f"Reviews for {place['name']}: {len(reviews)} reviews")
+        # 2. Download file to /tmp
 
-        summaries = self.summarize_reviews_in_dialect(demographics, revs, client)
+        # Optionally: clean up file
+        # self.atlas_client.find_video_metadata(s3_key)
 
-        return {"user_query": user_query, "demographics": demographics, "places": revs, "summaries": summaries}
+        # os.remove(local_path)     
+        return {"video_id": video_id, "index_id": index_id, "key_s3": s3_key}
 
-    def extract_user_interest(self, text: str, client: OpenAI) -> dict:
-        instructions = """
-        You are a helpful assistant. A user will provide a piece of text containing:
-        - Their interests or place they're inquiring about
-        - Personal or demographic data (age, gender, location, etc.)
-        - Additional details or preferences
+    def get_file(self, bucket, key):
+        file_name = key.split('/')[-1]
+        local_path = f'/tmp/{file_name}'
+        self.s3.download_file(bucket, key, local_path)
+        logger.info(f"Downloaded {key} to {local_path}")
 
-        Your job is to extract:
-        1. The user's query (for searching places)
-        2. Any available demographic or personalization data
-
-        Return a JSON object like:
-        {
-            "query": "best sushi in Brooklyn",
-            "demographics": {
-                "age": "30",
-                "location": "Brooklyn",
-                "gender": "female",
-                "language": "English",
-                "dialect": "African American Vernacular English"
-            }
-        }
+        # 3. Process the file (your logic here)
+        # Example: Just print size, but here you could use ffmpeg, analyze, etc.
+        return open(local_path, 'rb'), local_path
+            # return {'file': (file_name, f)}
+        
+    def on_task_update(self, task: Task):
+        print(f"  Status={task.status}")
+        
+    def get_video_duration_moviepy(self, filename):
         """
+        Retrieves the duration of a video file using MoviePy.
 
-        messages = [
-            {"role": "system", "content": instructions},
-            {"role": "user", "content": text}
-        ]
+        Args:
+            filename (str): The path to the video file.
 
-        response = client.chat.completions.create(
-            model='gpt-4.1-mini-2025-04-14',
-            messages=messages
-        )
-
-        return json.loads(response.choices[0].message.content)
-
-    def summarize_reviews_in_dialect(self, demographics: dict, places: list, client: OpenAI) -> list:
-        instructions = f"""
-        You are a fun and culturally-aware assistant. Your job is to read reviews for a list of places and synthesize a short, high-level summary for each place in the dialect that best matches the user demographic.
-
-        Demographic metadata:
-        {json.dumps(demographics)}
-
-        Use culturally relevant language. For example:
-        - Young users might prefer slang like "This place is fire" or "a total vibe."
-        - Older users might prefer "This is a wonderful spot" or "a charming experience."
-        - Consider dialects and regional slang when writing the summaries.
-
-        For each place, return a JSON object with:
-        - name
-        - summary
-
-        ONLY respond with a JSON array.
+        Returns:
+            float: The duration of the video in seconds.
         """
+        try:
+            clip = VideoFileClip(filename)
+            duration = clip.duration
+            clip.close()  # Release resources
+            return duration
+        except Exception as e:
+            print(f"Error getting video duration with MoviePy: {e}")
+            return None
 
-        user_input = json.dumps(places, indent=2)
-        messages = [
-            {"role": "system", "content": instructions},
-            {"role": "user", "content": user_input}
-        ]
-
-        response = client.chat.completions.create(
-            model='gpt-4.1-mini-2025-04-14',
-            messages=messages
-        )
-
-        return json.loads(response.choices[0].message.content)
-
-    def search_places_by_text(self, query: str, location_bias: str = "New York City") -> list:
-        url = "https://maps.googleapis.com/maps/api/place/textsearch/json"
-        params = {
-            "query": query,
-            "key": self.google_api_key,
-        }
-        if location_bias:
-            params["location"] = location_bias
-            params["radius"] = 5000
-
-        response = requests.get(url, params=params)
-        results = response.json().get("results", [])
-
-        if not results:
-            logger.warning("No matching places found.")
-            return []
-
-        places = []
-        for place in results[:5]:
-            places.append({
-                "name": place.get("name"),
-                "address": place.get("formatted_address"),
-                "rating": place.get("rating"),
-                "place_id": place.get("place_id"),
-            })
-
-        return places
-
-    def get_place_details_with_reviews(self, place_id):
-        url = f"https://maps.googleapis.com/maps/api/place/details/json"
-        params = {
-            "place_id": place_id,
-            "fields": "name,rating,user_ratings_total,reviews",
-            "key": self.google_api_key,
-        }
-
-        response = requests.get(url, params=params)
-        data = response.json()
-
-        if data.get("status") != "OK":
-            logger.warning(f"Google API Error: {data.get('status')}")
-            return []
-
-        raw_reviews = data["result"].get("reviews", [])
-
-        reviews = [
-            {
-                "author_name": r.get("author_name"),
-                "rating": r.get("rating"),
-                "text": r.get("text"),
-                "time": r.get("time"),
-                "relative_time_description": r.get("relative_time_description")
-            }
-            for r in raw_reviews
-        ]
-
-        return reviews
