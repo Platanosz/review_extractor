@@ -92,7 +92,7 @@ class Orchestrator:
         # Optionally: clean up file
         # self.atlas_client.find_video_metadata(s3_key)
 
-        # os.remove(local_path)     
+        os.remove(file_path)     
         return {"video_id": video_id, "index_id": index_id, "key_s3": s3_key}
 
     def get_file(self, bucket, key):
